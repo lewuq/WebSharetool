@@ -7,6 +7,7 @@ import sys
 import signal
 import platform
 import ctypes
+import stat  # 【关键修复】必须导入这个库，否则 Mac/Linux 无法修改权限
 
 # ================= 配置区域 =================
 THEME_COLOR = "#8FC31F" # Seeed 品牌绿
@@ -21,8 +22,8 @@ class SeeedShareTool:
         
         # 设置初始大小
         self.root.geometry("520x450") 
-        self.root.minsize(520, 420)   # 限制最小尺寸，防止内容被遮挡
-        self.root.resizable(True, True) # 确保允许宽、高调整
+        self.root.minsize(520, 420)
+        self.root.resizable(True, True)
         
         self.root.configure(bg="white")
 
@@ -48,42 +49,34 @@ class SeeedShareTool:
         hint_font = ("Microsoft YaHei UI", 9) if self.system_os == "Windows" else ("Segoe UI", 9)
         btn_font = ("Microsoft YaHei UI", 12, "bold") if self.system_os == "Windows" else ("Segoe UI", 12, "bold")
 
-        # --- 1. 顶部标题栏 (固定高度) ---
+        # --- 1. 顶部标题栏 ---
         header_frame = tk.Frame(self.root, bg=THEME_COLOR, height=60)
         header_frame.pack(fill="x", side="top")
-        header_frame.pack_propagate(False) # 禁止自动压缩
+        header_frame.pack_propagate(False)
 
-        # 标题文字
         title_font = ("Microsoft YaHei UI", 18, "bold") if self.system_os == "Windows" else ("Segoe UI", 20, "bold")
         tk.Label(header_frame, text="SeeedShareTool", bg=THEME_COLOR, fg="white",
                  font=title_font).pack(side="left", padx=25, pady=10)
 
-        # --- 2. 状态栏 (固定底部) ---
-        # 先把状态栏放好，使用 side="bottom" 确保它永远沉底
+        # --- 2. 状态栏 ---
         self.status_lbl = tk.Label(self.root, text="准备就绪。", bg="white", fg="#999999", font=hint_font, anchor="w")
         self.status_lbl.pack(side="bottom", fill="x", padx=25, pady=10)
 
-        # --- 3. 主内容容器 (用于垂直弹性分布) ---
-        # 创建一个不可见的容器，用来装中间的所有东西
+        # --- 3. 主内容容器 ---
         main_content = tk.Frame(self.root, bg="white")
         main_content.pack(fill="both", expand=True, padx=25, pady=10)
 
         # --- 4. 配置区域 ---
-        # expand=True 让这个区域在垂直方向上分得空间
         config_frame = tk.LabelFrame(main_content, text=" 配置 ", bg="white", fg="#666666",
                                      font=group_font, bd=1, relief="solid")
-        config_frame.pack(fill="x", pady=10, expand=True) # expand=True 实现垂直分散
-
-        # 配置 Grid 权重
+        config_frame.pack(fill="x", pady=10, expand=True)
         config_frame.columnconfigure(1, weight=1)
 
-        # 本地地址
         tk.Label(config_frame, text="本地地址:", bg="white", font=ui_font).grid(row=0, column=0, padx=(20, 10), pady=15, sticky="w")
         self.url_entry = tk.Entry(config_frame, font=ui_font, bd=1, relief="solid")
         self.url_entry.insert(0, "http://localhost:3000")
         self.url_entry.grid(row=0, column=1, padx=(0, 20), pady=15, sticky="ew", ipady=3)
 
-        # 有效时长
         tk.Label(config_frame, text="有效时长(H):", bg="white", font=ui_font).grid(row=1, column=0, padx=(20, 10), pady=(0, 15), sticky="w")
         
         dur_frame = tk.Frame(config_frame, bg="white")
@@ -96,14 +89,12 @@ class SeeedShareTool:
         tk.Label(dur_frame, text="(到期后自动断开连接)", bg="white", fg="#999999", font=hint_font).pack(side="left", padx=10)
 
         # --- 5. 按钮 ---
-        # expand=True 让按钮上下也会有自动的间距
         self.action_btn = tk.Button(main_content, text=BTN_START_TEXT, bg="white", fg="black",
                                     font=btn_font, command=self.toggle_tunnel,
                                     relief="raised", bd=2, cursor="hand2")
         self.action_btn.pack(fill="x", pady=10, ipady=5, expand=True)
 
         # --- 6. 结果显示区域 ---
-        # 创建一个Frame来包住结果标签和输入框，让它们作为一个整体参与垂直分布
         result_frame = tk.Frame(main_content, bg="white")
         result_frame.pack(fill="x", pady=10, expand=True)
 
@@ -121,14 +112,33 @@ class SeeedShareTool:
 
     def get_executable_path(self):
         """获取 cloudflared 文件的路径"""
+        # 判断是脚本运行还是打包后的exe运行
         if getattr(sys, 'frozen', False):
             base_path = os.path.dirname(sys.executable)
+            # 【Mac 专属修复】Mac打包后需要往上跳3层找文件
+            if self.system_os == "Darwin" and "Contents/MacOS" in base_path:
+                base_path = os.path.abspath(os.path.join(base_path, "../../.."))
         else:
             base_path = os.path.dirname(os.path.abspath(__file__))
 
         filename = "cloudflared.exe" if self.system_os == "Windows" else "cloudflared"
         exe_path = os.path.join(base_path, filename)
         return exe_path
+
+    def ensure_permission(self, exe_path):
+        """
+        自动检查并赋予 cloudflared 执行权限 (Mac/Linux)
+        """
+        if self.system_os == "Darwin" or self.system_os == "Linux":
+            if os.path.exists(exe_path):
+                try:
+                    # 获取当前权限
+                    st = os.stat(exe_path)
+                    # 添加用户执行权限 (S_IEXEC)
+                    os.chmod(exe_path, st.st_mode | stat.S_IEXEC)
+                    print(f"已自动赋予执行权限: {exe_path}")
+                except Exception as e:
+                    print(f"权限修改失败: {e}")
 
     def start_tunnel(self):
         target = self.url_entry.get().strip()
@@ -142,7 +152,13 @@ class SeeedShareTool:
             messagebox.showerror("错误", "请输入本地地址！")
             return
 
+        # 1. 获取路径
         exe_path = self.get_executable_path()
+
+        # 2. 检查并修复权限 (调用上面定义的方法)
+        self.ensure_permission(exe_path)
+        
+        # 3. 检查文件是否存在
         if not os.path.exists(exe_path):
              messagebox.showerror("错误", f"找不到引擎文件！\n\n请确保 [{os.path.basename(exe_path)}] \n与本程序在同一文件夹内。")
              return
