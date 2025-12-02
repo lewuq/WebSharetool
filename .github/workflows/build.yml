@@ -1,0 +1,44 @@
+name: Build Mac App
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: macos-latest  # 关键点：使用 GitHub 提供的正版 macOS 环境
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install Dependencies
+      run: |
+        pip install pyinstaller
+        # 如果有其他库，也在这里安装，比如 pip install tk
+
+    - name: Download Cloudflared (Mac)
+      run: |
+        # 自动下载 Mac 版引擎
+        curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64 -o cloudflared
+        chmod +x cloudflared
+
+    - name: Build with PyInstaller
+      run: |
+        # 运行打包命令
+        pyinstaller --noconsole --windowed --onefile --name="SeeedShareTool_Mac" WebShareTool.py
+
+    - name: Package for Release
+      run: |
+        # 把 cloudflared 和 .app 放到一起
+        mkdir -p Final_Mac_Build
+        mv dist/SeeedShareTool_Mac.app Final_Mac_Build/
+        cp cloudflared Final_Mac_Build/
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: Mac_Version_App
+        path: Final_Mac_Build/
