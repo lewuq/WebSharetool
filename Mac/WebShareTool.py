@@ -42,6 +42,7 @@ def read_stream(process):
     while True:
         if process.poll() is not None: break
         try:
+            # 忽略读取错误（防止脚本退出时报错）
             line = process.stderr.readline()
             if not line: break
             if ".trycloudflare.com" in line:
@@ -76,7 +77,7 @@ def heartbeat_monitor():
         # 只有在隧道开启时才检查心跳
         if tunnel_process is not None:
             # 如果超过 5 秒没收到心跳 (网页已关)
-            if time.time() - last_heartbeat > 5:
+            if time.time() - last_heartbeat > 600:
                 print("⚠️ 检测到网页关闭，自动停止分享...")
                 stop_tunnel_internal()
 
@@ -137,7 +138,7 @@ HTML_TEMPLATE = """
         let checkInterval;
         let heartbeatInterval;
 
-        // 页面加载时启动心跳
+        // 页面加载时启动心跳 (保留心跳以实现“关网页即停”)
         window.onload = function() {
             sendHeartbeat();
             heartbeatInterval = setInterval(sendHeartbeat, 2000); // 每2秒发送一次心跳
@@ -235,7 +236,7 @@ HTML_TEMPLATE = """
 # ================= 路由逻辑 =================
 @app.route('/')
 def index():
-    # 访问主页时更新一次心跳，防止刚打开就断开
+    # 访问主页时更新一次心跳
     global last_heartbeat
     last_heartbeat = time.time()
     return render_template_string(HTML_TEMPLATE, color=THEME_COLOR)
@@ -267,7 +268,6 @@ def api_start():
     
     current_url = ""
     
-    # 随机端口避免冲突
     import random
     rand_port = random.randint(10000, 60000)
     
@@ -275,9 +275,10 @@ def api_start():
     preexec = None
     
     if platform.system() == "Windows":
-        creation_flags = subprocess.CREATE_NO_WINDOW
+        # 使用 CREATE_NO_WINDOW (0x08000000)
+        # 尝试通过 CREATE_NEW_PROCESS_GROUP (0x00000200) 让它在关闭终端时存活（视系统策略而定）
+        creation_flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
     else:
-        # Mac/Linux 使用 setsid 创建进程组，方便 killpg 一锅端
         preexec = os.setsid
         
     cmd = [exe_path, "tunnel", "--protocol", "http2", "--url", target, "--metrics", f"localhost:{rand_port}"]
@@ -300,10 +301,9 @@ def api_start():
 @app.route('/api/status')
 def api_status():
     global tunnel_process
-    # 检查进程是否还在运行
     is_running = tunnel_process is not None and tunnel_process.poll() is None
     if not is_running:
-        tunnel_process = None # 清理失效句柄
+        tunnel_process = None 
     return jsonify({"running": is_running, "url": current_url})
 
 @app.route('/api/stop', methods=['POST'])
@@ -328,13 +328,12 @@ if __name__ == '__main__':
     # 启动自动打开浏览器
     threading.Thread(target=open_browser).start()
     
-    # 启动心跳监控线程 (新增)
+    # 启动心跳监控线程 (保留此功能)
     monitor_thread = threading.Thread(target=heartbeat_monitor, daemon=True)
     monitor_thread.start()
     
-    print(f"WebShareTool Web V3.0 is running on port {PORT}...")
+    print(f"WebShareTool Web V3.1 is running on port {PORT}...")
     try:
         app.run(host='0.0.0.0', port=PORT, debug=False)
-    finally:
-        # 退出时清理
-        stop_tunnel_internal()
+    except:
+        pass
